@@ -44,8 +44,6 @@ def ttm_fields_tuple(chosen_year):
             'car_m_d',
             ),
         '2015': (
-            'from_id',
-            'to_id',
             'walk_t',
             'walk_d',
             'pt_r_tt',
@@ -60,8 +58,6 @@ def ttm_fields_tuple(chosen_year):
             'car_m_d',
             ),
         '2018': (
-            'from_id',  # From MSSSUF grid ID.
-            'to_id',    # To MSSSUF grid ID.
             'walk_t',   # Walking time.
             'walk_d',   # Walking distance.
             'bike_s_t', # Standard riding time on a bicycle.
@@ -120,10 +116,9 @@ def journey_fields_tuple():
         )
     return fields
 
-# Define DB connection params. No passwd here; using a client cert. 
+# Define DB connection params.
 def get_db_conn():
     conn_params = {
-        'host': 'localhost',
         'dbname': 'tt'
         }
     
