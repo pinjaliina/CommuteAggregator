@@ -10,16 +10,14 @@ Created on Tue Feb 18 13:13:02 2020
 @author: Pinja-Liina Jalkanen (pinjaliina@iki.fi)
 """
 
-#import sys
+import sys
 #import os
 #import tempfile
 #import datetime
 import psycopg2
-import csv
-#import re
+import re
 #import configparser
 import argparse
-from random import randint
 
 # get_relations(postgresql)
 
@@ -116,10 +114,26 @@ def journey_fields_tuple():
         )
     return fields
 
+def get_result_fields(option = 0):
+    base = ['measure', 'ttm_year', 'journey_year']
+    if option == 0:
+        return tuple(base + ['total'])
+    if option == 1 or option == 3:
+        ic = list()
+        for field in journey_fields_tuple():
+            if re.match('[a-z]_[a-z0-9]{4,}', field):
+                ic.append(field)
+        if option == 1:
+            return tuple(base + ['total'] + ic)
+        if option == 3:
+            return tuple(['yht'] + ic)
+    if option == 2:
+        return tuple(['yht'])
+        
 # Define DB connection params.
 def get_db_conn():
     conn_params = {
-        'dbname': 'tt'
+         'dbname': 'tt'
         }
     
     try:
@@ -134,10 +148,43 @@ def get_db_conn():
 def run_query(pg, query, *params):
     # "SELECT tablename FROM pg_tables WHERE schemaname='public'"
     results = False
+    # print(pg.mogrify(query, params)) #DEBUG!
     pg.execute(query, params)
+    if re.match('^DROP TABLE.*', query) and \
+        re.match('^DROP TABLE$', pg.statusmessage):
+        results = True
     if pg.rowcount > 0:
-        results = pg.fetchall()
+        try:
+            results = pg.fetchall()
+        except psycopg2.ProgrammingError:
+            results = True
+            pass
     return results
+
+# Check if table exists and create it if needed. Note that this
+# function alone is not SQL injection safe if tablename is user input!
+def check_table(pg, tablename, *fields, drop = False):
+    try:
+        if drop:
+            query = 'DROP TABLE IF EXISTS {}'.format(tablename)
+            results = run_query(pg, query)
+            if results:
+                print('Dropping existing table "' + tablename + \
+                      '" as requested...')
+    except psycopg2.ProgrammingError:
+        print('Failed to delete table ' + tablename + '!')
+        raise
+    try:
+        fields = '(' + fields[0] + ' text not null, ' + \
+            fields[1] + ' integer not null, ' + \
+            fields[2] + ' integer not null, ' + ' integer not null, '\
+            .join(fields[3:]) + ' bigint not null)'
+        query = 'CREATE TABLE ' + tablename + ' ' + fields
+        run_query(pg, query)
+        return tablename
+    except psycopg2.ProgrammingError:
+        print('Failed to create the table ' + tablename + '!')
+        raise
 
 def get_query_string(ttm_y, msssuf_y, ic_data_only = False):
     ttm_tuple = ttm_fields_tuple(ttm_y)
@@ -149,9 +196,12 @@ def get_query_string(ttm_y, msssuf_y, ic_data_only = False):
     # ttm_fields = ttm_key_fields + ttm_data_fields
     # journey_fields = 'j.' + ', j.'.join(journey_fields_tuple())
     sum_fields = ''
-    for field in ttm_tuple[1]:
-        sum_fields = sum_fields + 'SUM(' + ttmtblpfx + field + ' * yht) AS '\
-            + field + ', '
+    agg_fields = get_result_fields(option = int(ic_data_only) + 2)
+    print(agg_fields)
+    for ttm_field in ttm_tuple[1]:
+        for agg_field in agg_fields:
+            sum_fields = sum_fields + 'SUM(' + ttmtblpfx + ttm_field + \
+                ' * ' + agg_field + ') AS ' + ttm_field + ', '
     sum_fields = sum_fields[:-2]
 #     query = '\
 # SELECT ' +  ttm_fields  + ', ' + journey_fields + ' \
@@ -167,35 +217,62 @@ SELECT ' + sum_fields + ' FROM ' + ttmtbl + ' INNER JOIN \
 hcr_msssuf_journeys j ON ' + ttmtbl + '.id = j.id AND \
 ' + ttmtbl + '.vuosi = j.vuosi WHERE \
 ' + ttmtbl + '.vuosi = %s AND ' + ttmtbl + '.sp = %s'
+    if(ic_data_only):
+        sum_query = sum_query + ' AND j.yht >= 10'
+    print(sum_query)
+    sys.exit(1)
     return sum_query
 
-def build_tables(outfile, ic_data_only = False):
+def build_tables(tablename, ic_data_only = False, drop = False):
     pg = get_db_conn()
-    csvfile = False
-    try:
-        csvfile = open(outfile, 'w', newline = '')
-    except IOError:
-        print('Cannot open the output CSV file ' + outfile + '!')
-        raise
-    writer = csv.writer(csvfile, delimiter='\t',
-                        quotechar='', quoting=csv.QUOTE_NONE)
-    for ttm in ttm_years():
-    # for ttm in [2013]:
-        writer.writerow(['TTM ' + str(ttm)] + list(ttm_fields_tuple(ttm)[1]))
+    fields = get_result_fields(option = int(ic_data_only))
+    tablename = check_table(pg, tablename, *fields, drop = drop)
+    # for ttm in ttm_years():
+    for ttm in [2013]:
+        rowhead = ttm_fields_tuple(2013)[1]
         for year in journey_data_years():
-            query = get_query_string(ttm, year)
+            query = get_query_string(ttm, year, ic_data_only = ic_data_only)
             params = (str(year), '0')
             print('Processing the ' + str(ttm) + ' TTM with ' + str(year) + \
                   ' journey data...')
             query_res = run_query(pg, query, *params)
-            writer.writerow([str(year) + ' journeys'] + list(query_res[0]))
-    csvfile.close()
+            for key, res_item in enumerate(query_res[0]):
+                row = ([rowhead[key], ttm, year, res_item])
+                columns = ', '.join(fields)
+                params = ', '.join(['%s' for i in row])
+                insert = 'INSERT INTO {} ({}) VALUES ({})'.format(
+                    tablename, columns, params)
+                run_query(pg, insert, *row)
+
+# Define a custom argparse action for checking that the tablename is sane.
+class tablename_check(argparse.Action):
+    def __call__(self, parser, namespace, tablename, option_string=None):
+        # Define an exception handler to enable suppressing traceback:
+        def exceptionHandler(exception_type, exception, traceback):
+            print('{}: {}'.format(exception_type.__name__, exception))
+        
+        if re.match('^[a-z0-9_]{3,}$', tablename):
+            setattr(namespace, self.dest, tablename)
+        else:
+            parser.print_usage()
+            sys.excepthook = exceptionHandler # Suppress traceback.
+            raise argparse.ArgumentTypeError(
+                'Table name contains illegal characters!')
 
 def main():
-    parser = argparse.ArgumentParser(description='Create Time Travel Matrix aggregate tables.')
-    parser.add_argument('outfile', help='Output file name.')
+    parser = argparse.ArgumentParser(
+        description='Create Time Travel Matrix aggregate tables.')
+    parser.add_argument('tablename', action=tablename_check, \
+                        help='Output table name. Allowed characters ' + \
+                        "are lowercase a-z, 0-9 and underscore ('_').")
+    parser.add_argument('-d', '--drop', dest='drop', \
+                        default=False, action='store_true', \
+                            help='Drop existing table of the same name.')
+    parser.add_argument('-c', '--classified', dest='ic', \
+                        default=False, action='store_true', help=\
+                            'Count only journeys classified by industry.')
     args = parser.parse_args()
-    build_tables(args.outfile)
+    build_tables(args.tablename, ic_data_only = args.ic, drop = args.drop)
     
 if __name__ == '__main__':
     main()
