@@ -3,7 +3,7 @@
 """
 Loop through a University of Helsinki / Geography Travel Time Matrix
 Join data with MSSSUF (fi: YKR) commuting data and count aggregated
-information.
+information. Write the output back to the DB.
 
 Created on Tue Feb 18 13:13:02 2020
 
@@ -11,25 +11,34 @@ Created on Tue Feb 18 13:13:02 2020
 """
 
 import sys
-#import os
-#import tempfile
-#import datetime
 import psycopg2
 import re
-#import configparser
 import argparse
 
-# get_relations(postgresql)
-
-def ttm_years(): return (2013, 2015, 2018)
+def ttm_years():
+    """Return a tuple of all available Time Travel Matrices."""
+    return (2013, 2015, 2018)
 
 def journey_data_years(all_y = False):
+    """Return available journey data years
+    
+    Either return all the years, if all_y = True, or just
+    those that are relevant from the TTM viewpoint.
+    """
+    
     if not (all_y):
         return (2012, 2014, 2015, 2016)
     else:
         return (2007, 2009, 2010, 2012, 2014, 2015, 2016)
 
 def ttm_fields_tuple(chosen_year):
+    """Return the data fields of a particular TTM.
+    
+    Return all the DB fields (except from_id and to_id)
+    of a particular Time Travel Matrix. Takes the TTM
+    year as an argument.
+    """
+    
     chosen_year = str(chosen_year)
     year = {
         '2013': (
@@ -81,11 +90,14 @@ def ttm_fields_tuple(chosen_year):
         exit(1)
 
 def journey_fields_tuple():
+    """Returns the data fields of the journeys table (no id/xy/geom fields.)"""
+
     fields = (
         'akunta',
         'tkunta',
         'vuosi',
         'matka',
+        'sp',
         'yht',
         'a_alkut',
         'b_kaivos',
@@ -109,12 +121,22 @@ def journey_fields_tuple():
         't_koti',
         'u_kvjarj',
         'x_tuntem',
-        'txyind',
-        'axyind',
         )
     return fields
 
 def get_result_fields(option = 0):
+    """Returns a field list for the SQL queries.
+    
+    Depending on the value of the "option" argument it might return either
+    a complete list of fields for the target table or just those fields
+    of the source table whose values are meant to be aggregated, as follows:
+        
+    0: the complete target field list, without industry classification fields.
+    1: the complete target field list, with industry classification fields.
+    2: source table fields to be aggregated, without IC fields.
+    3: source table fields to be aggregated, with IC fields.
+    """
+    
     base = ['measure', 'ttm_year', 'journey_year']
     if option == 0:
         return tuple(base + ['total'])
@@ -132,6 +154,18 @@ def get_result_fields(option = 0):
         
 # Define DB connection params.
 def get_db_conn():
+    """Define DB connection params.
+    
+    If successful, return a psycopg2 DB cursor.
+    
+    On localhost just dbname will usually suffice, but over remote
+    connections e.g. the following can be defined as well:
+        * host
+        * user
+        * sslmode (please use "verify-full"!)
+        * password (if using password authentication instead of a client cert).
+    """
+    
     conn_params = {
          'dbname': 'tt'
         }
@@ -144,11 +178,12 @@ def get_db_conn():
         print('Failed to establish a DB connection!\n')
         raise
 
-# Run a DB query. Note: this func DOES NOT validate the query string!
 def run_query(pg, query, *params):
-    # "SELECT tablename FROM pg_tables WHERE schemaname='public'"
+    """Run a DB query. Note: this func DOES NOT validate the query string!"""
+    
+    # Show tables: "SELECT tablename FROM pg_tables WHERE schemaname='public'"
     results = False
-    # print(pg.mogrify(query, params)) #DEBUG!
+    # print(pg.mogrify(query, params)) #DEBUG: print the query str as executed.
     pg.execute(query, params)
     if re.match('^DROP TABLE.*', query) and \
         re.match('^DROP TABLE$', pg.statusmessage):
@@ -156,14 +191,25 @@ def run_query(pg, query, *params):
     if pg.rowcount > 0:
         try:
             results = pg.fetchall()
-        except psycopg2.ProgrammingError:
+        except psycopg2.ProgrammingError: # INSERT queries end up here.
             results = True
             pass
     return results
 
-# Check if table exists and create it if needed. Note that this
-# function alone is not SQL injection safe if tablename is user input!
 def check_table(pg, tablename, *fields, drop = False):
+    """Check if a requested table exists and create it if needed.
+    
+    Note that this function alone is NOT SQL injection safe if the tablename
+    is input by the user! This is because psycopg2 doesn't allow using table
+    names as query params.
+    
+    An existing table is dropped only if explicitly requested; otherwise
+    an error is raised instead.
+    
+    The field list for creating a new table is expected to be created
+    by get_result_fields().
+    """
+    
     try:
         if drop:
             query = 'DROP TABLE IF EXISTS {}'.format(tablename)
@@ -186,32 +232,29 @@ def check_table(pg, tablename, *fields, drop = False):
         print('Failed to create the table ' + tablename + '!')
         raise
 
-def get_query_string(ttm_y, msssuf_y, ic_data_only = False):
+def get_query_string(ttm_y, msssuf_y, aggregate, ic_data_only = False):
+    """Build a query string for searching the data that should be aggregated.
+    
+    Takes the following arguments:
+        ttm_y        = Year of the Travel Time Matrix (TTM).
+        msssuf_y     = Year of the journey data to be joined with the TTM.
+        aggregate    = The journey data field that is to be aggregated.
+                       Note that this should be set together with the
+                       ic_data_only option; otherwise, the results
+                       won't make sense.
+        ic_data_only = whether the query criteria will be limited only to
+                       cover only data that is classified by industry.
+                       Default: False.
+    """
+    
     ttm_tuple = ttm_fields_tuple(ttm_y)
     ttmtbl = 'hcr_journeys_t_d_' + ttm_tuple[0]
     ttmtblpfx = ttmtbl + '.'
-    # ttmtbl_tuple_sep = ', ' + ttmtblpfx
-    # ttm_data_fields = ttmtblpfx + ttmtbl_tuple_sep.join(ttm_tuple[1])
-    # ttm_key_fields = ttmtblpfx + 'from_id, ' + ttmtblpfx + 'to_id, '
-    # ttm_fields = ttm_key_fields + ttm_data_fields
-    # journey_fields = 'j.' + ', j.'.join(journey_fields_tuple())
     sum_fields = ''
-    agg_fields = get_result_fields(option = int(ic_data_only) + 2)
-    print(agg_fields)
-    for ttm_field in ttm_tuple[1]:
-        for agg_field in agg_fields:
-            sum_fields = sum_fields + 'SUM(' + ttmtblpfx + ttm_field + \
-                ' * ' + agg_field + ') AS ' + ttm_field + ', '
+    for field in ttm_tuple[1]:
+        sum_fields = sum_fields + 'SUM(' + ttmtblpfx + field + ' * ' + \
+            aggregate + ') AS ' + field + ', '
     sum_fields = sum_fields[:-2]
-#     query = '\
-# SELECT ' +  ttm_fields  + ', ' + journey_fields + ' \
-# FROM hcr_msssuf_grid g \
-# INNER JOIN ' + ttmtbl + ' ON g.gid = ' + ttmtbl + '.from_id \
-# AND ' + ttmtbl + '.from_id=5925835 \
-# INNER JOIN hcr_msssuf_journeys j ON g.xyind = j.axyind \
-# WHERE j.vuosi = %s AND j.sp=0'# \
-# # GROUP BY ' + ttm_key_fields + ', ' + ttm_fields + ', ' + journey_fields
-    #print(query)
     sum_query = '\
 SELECT ' + sum_fields + ' FROM ' + ttmtbl + ' INNER JOIN \
 hcr_msssuf_journeys j ON ' + ttmtbl + '.id = j.id AND \
@@ -219,33 +262,61 @@ hcr_msssuf_journeys j ON ' + ttmtbl + '.id = j.id AND \
 ' + ttmtbl + '.vuosi = %s AND ' + ttmtbl + '.sp = %s'
     if(ic_data_only):
         sum_query = sum_query + ' AND j.yht >= 10'
-    print(sum_query)
-    sys.exit(1)
     return sum_query
 
 def build_tables(tablename, ic_data_only = False, drop = False):
+    """Build the query result tables and write them to the DB.
+    
+       This function builds on almost all of the others; it reads
+       data from the DB, aggregates it, creates a new DB table for
+       the results and writes the results to the DB.
+       
+       Arguments:
+           tablename    = Name of the result table to be created.
+           ic_data_only = Whether to count only those results that are
+                          classified by industry.
+           drop         = If the tablename already exists, whether to drop
+                          the existing table.
+    """
+    
     pg = get_db_conn()
     fields = get_result_fields(option = int(ic_data_only))
+    print(fields)
     tablename = check_table(pg, tablename, *fields, drop = drop)
-    # for ttm in ttm_years():
-    for ttm in [2013]:
+    for ttm in ttm_years():
+    # for ttm in [2013]: #DEBUG
         rowhead = ttm_fields_tuple(2013)[1]
         for year in journey_data_years():
-            query = get_query_string(ttm, year, ic_data_only = ic_data_only)
-            params = (str(year), '0')
-            print('Processing the ' + str(ttm) + ' TTM with ' + str(year) + \
-                  ' journey data...')
-            query_res = run_query(pg, query, *params)
-            for key, res_item in enumerate(query_res[0]):
-                row = ([rowhead[key], ttm, year, res_item])
+        # for year in [2012]: #DEBUG
+            query_results = list()
+            agg_fields = get_result_fields(option = int(ic_data_only) + 2)
+            for aggregate in agg_fields:
+                query = get_query_string(ttm, year, aggregate, ic_data_only)
+                params = (str(year), '0')
+                print('Processing the ' + str(ttm) + \
+                      ' TTM with ' + str(year) + ' journey data...')
+                query_results.append(run_query(pg, query, *params))
+            print(query_results)
+            rows = list()
+            res = 0
+            while res < len(query_results[0][0]):
+                row = list()
+                for agg_key, aggregate in enumerate(agg_fields):
+                    row.append(query_results[agg_key][0][res])
+                rows.append(row)
+                res += 1
+            for key, res_item in enumerate(rows):
+                row = ([rowhead[key], ttm, year] + res_item)
                 columns = ', '.join(fields)
                 params = ', '.join(['%s' for i in row])
                 insert = 'INSERT INTO {} ({}) VALUES ({})'.format(
                     tablename, columns, params)
                 run_query(pg, insert, *row)
 
-# Define a custom argparse action for checking that the tablename is sane.
 class tablename_check(argparse.Action):
+    """
+    Define an argparse action for checking that the input tablename is sane.
+    """
     def __call__(self, parser, namespace, tablename, option_string=None):
         # Define an exception handler to enable suppressing traceback:
         def exceptionHandler(exception_type, exception, traceback):
@@ -260,6 +331,7 @@ class tablename_check(argparse.Action):
                 'Table name contains illegal characters!')
 
 def main():
+    """Main program for direct calls."""
     parser = argparse.ArgumentParser(
         description='Create Time Travel Matrix aggregate tables.')
     parser.add_argument('tablename', action=tablename_check, \
