@@ -215,7 +215,7 @@ def check_table(pg, tablename, *fields, drop = False):
             query = 'DROP TABLE IF EXISTS {}'.format(tablename)
             results = run_query(pg, query)
             if results:
-                print('Dropping existing table "' + tablename + \
+                print('Attempted to drop the existing table "' + tablename + \
                       '" as requested...')
     except psycopg2.ProgrammingError:
         print('Failed to delete table ' + tablename + '!')
@@ -284,7 +284,7 @@ def build_tables(tablename, ic_data_only = False, drop = False):
     tablename = check_table(pg, tablename, *fields, drop = drop)
     for ttm in ttm_years():
     # for ttm in [2013]: #DEBUG
-        rowhead = ttm_fields_tuple(2013)[1]
+        rowhead = ttm_fields_tuple(ttm)[1]
         for year in journey_data_years():
         # for year in [2012]: #DEBUG
             query_results = list()
@@ -292,7 +292,7 @@ def build_tables(tablename, ic_data_only = False, drop = False):
             for aggregate in agg_fields:
                 query = get_query_string(ttm, year, aggregate, ic_data_only)
                 params = (str(year), '0')
-                print('Aggregating field ' + aggregate + ' of the ' + \
+                print('Aggregating field "' + aggregate + '" of the ' + \
                       str(year) + ' journey data with the ' + str(ttm) + \
                       ' TTM data...')
                 query_results.append(run_query(pg, query, *params))
