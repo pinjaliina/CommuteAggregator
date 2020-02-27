@@ -281,7 +281,6 @@ def build_tables(tablename, ic_data_only = False, drop = False):
     
     pg = get_db_conn()
     fields = get_result_fields(option = int(ic_data_only))
-    print(fields)
     tablename = check_table(pg, tablename, *fields, drop = drop)
     for ttm in ttm_years():
     # for ttm in [2013]: #DEBUG
