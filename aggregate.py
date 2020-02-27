@@ -293,10 +293,10 @@ def build_tables(tablename, ic_data_only = False, drop = False):
             for aggregate in agg_fields:
                 query = get_query_string(ttm, year, aggregate, ic_data_only)
                 params = (str(year), '0')
-                print('Processing the ' + str(ttm) + \
-                      ' TTM with ' + str(year) + ' journey data...')
+                print('Aggregating field ' + aggregate + ' of the ' + \
+                      str(year) + ' journey data with the ' + str(ttm) + \
+                      ' TTM data...')
                 query_results.append(run_query(pg, query, *params))
-            print(query_results)
             rows = list()
             res = 0
             while res < len(query_results[0][0]):
