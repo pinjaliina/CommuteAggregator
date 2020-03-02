@@ -344,11 +344,11 @@ def build_tables(tablename,
             reg_ids.append(reg[0])
     tablename = check_table(pg, tablename, *fields, drop = drop, r = regions)
     for reg in reg_ids:
-        # for ttm in ttm_years():
-        for ttm in [2013]: #DEBUG
+        for ttm in ttm_years():
+        # for ttm in [2013]: #DEBUG
             rowhead = ttm_fields_tuple(ttm)[1]
-            # for year in journey_data_years():
-            for year in [2012]: #DEBUG
+            for year in journey_data_years():
+            # for year in [2012]: #DEBUG
                 query_results = list()
                 agg_fields = get_result_fields(option = int(ic_data_only) + 2)
                 for aggregate in agg_fields:
