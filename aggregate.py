@@ -133,19 +133,20 @@ def get_result_fields(option = 0, regs = False):
         
     0: the complete target field list, without industry classification fields.
     1: the complete target field list, with industry classification fields.
-    2: source table fields to be aggregated, without IC fields.
-    3: source table fields to be aggregated, with IC fields.
+    2: source table fields to be aggregated, w/o the count or IC fields.
+    3: source table fields to be aggregated, w/o the count but w/ IC fields.
     
     If "reg_fields" is true, region fields are appended to complete lists.
     """
     
     base = ['measure', 'ttm_year', 'journey_year']
     reg_fields = ['mun', 'area', 'dist', 'reg_id']
+    c_n_t = ['count', 'total']
     if option == 0:
         if not regs:
-            return tuple(base + ['total'])
+            return tuple(base + c_n_t)
         else:
-            return tuple(base + reg_fields + ['total'])
+            return tuple(base + reg_fields + c_n_t)
     if option == 1 or option == 3:
         ic = list()
         for field in journey_fields_tuple():
@@ -153,9 +154,9 @@ def get_result_fields(option = 0, regs = False):
                 ic.append(field)
         if option == 1:
             if not regs:
-                return tuple(base + ['total'] + ic)
+                return tuple(base + c_n_t + ic)
             else:
-                return tuple(base + reg_fields + ['total'] + ic)                
+                return tuple(base + reg_fields + c_n_t + ic)
         if option == 3:
             return tuple(['yht'] + ic)
     if option == 2:
@@ -243,12 +244,14 @@ def check_table(pg, tablename, *fields, drop = False, r = False):
             fieldstr += ' text not null, '.join(fields[3:6]) + \
                 ' text not null, '
             fieldstr += fields[6] + ' text not null, '
-            fieldstr += fields[7] + ' bigint not null'
+            fieldstr += fields[7] + ' integer not null, '
+            fieldstr += fields[8] + ' bigint not null'
         else:
-            fieldstr += fields[3] + ' bigint not null'
+            fieldstr += fields[3] + ' integer not null, '
+            fieldstr += fields[4] + ' bigint not null'
         if len(fields)>8:
             fieldstr += ', ' + \
-                ' integer not null, '.join(fields[4+int(r)*4:]) + \
+                ' integer not null, '.join(fields[5+int(r)*4:]) + \
                 ' integer not null'
         fieldstr += ')'
         query = 'CREATE TABLE ' + tablename + ' ' + fieldstr
@@ -298,7 +301,7 @@ def get_query_string(ttm_y,
             ' IS NOT NULL THEN ' + ttmtblpfx + field + ' ELSE 0 END) * ' + \
             aggregate + ') AS ' + field + ', '
     sum_fields = sum_fields[:-2]
-    query_select_base = 'SELECT ' + sum_fields
+    query_select_base = 'SELECT ' + sum_fields + ', SUM(yht) AS count'
     query_regions_fields = ''
     if region:
         query_regions_fields += ", LPAD(s.kunta::text, 3, '0') AS mun"
@@ -394,11 +397,15 @@ def build_tables(tablename,
                     for i in range(4):
                         if rows:
                             reg_fields.insert(0, rows.pop()[0])
+                count_field = list()
+                if rows:
+                    count_field.insert(0, rows.pop()[0])
                 if rows:
                     for key, res_item in enumerate(rows):
                         row = [rowhead[key], ttm, year]
                         if regions:
                             row += reg_fields
+                        row += count_field
                         row += res_item
                         columns = ', '.join(fields)
                         params = ', '.join(['%s' for i in row])
