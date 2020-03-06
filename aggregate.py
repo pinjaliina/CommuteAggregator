@@ -249,7 +249,7 @@ def check_table(pg, tablename, *fields, drop = False, r = False):
         else:
             fieldstr += fields[3] + ' integer not null, '
             fieldstr += fields[4] + ' bigint not null'
-        if len(fields)>8:
+        if len(fields)>9:
             fieldstr += ', ' + \
                 ' integer not null, '.join(fields[5+int(r)*4:]) + \
                 ' integer not null'
