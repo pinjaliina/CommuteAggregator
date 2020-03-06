@@ -192,14 +192,18 @@ def run_query(pg, query, *params):
     
     # Show tables: "SELECT tablename FROM pg_tables WHERE schemaname='public'"
     results = False
-    # print(pg.mogrify(query, params)) #DEBUG: print the query str as executed.
-    pg.execute(query, params)
+    qs = pg.mogrify(query, params)
+    try:
+        pg.execute(query, params)
+    except psycopg2.Error as e:
+        print(e.pgerror + 'Query: ' + qs.decode('utf-8'))
+        raise
     if re.match('^DROP TABLE.*', query) and \
         re.match('^DROP TABLE$', pg.statusmessage):
         results = True
     if pg.rowcount > 0:
         try:
-            results = pg.fetchall()
+           results = pg.fetchall()
         except psycopg2.ProgrammingError: # INSERT queries end up here.
             results = True
             pass
@@ -236,11 +240,17 @@ def check_table(pg, tablename, *fields, drop = False, r = False):
             fields[1] + ' integer not null, ' + \
             fields[2] + ' integer not null, '
         if r:
-            fieldstr += ' integer not null, '.join(fields[3:6]) + \
-                ' integer not null, '
-            fieldstr += fields[6] + ' bigint not null, '
-        fieldstr += ' integer not null, '.join(fields[3+int(r)*4:]) + \
-            ' bigint not null)'
+            fieldstr += ' text not null, '.join(fields[3:6]) + \
+                ' text not null, '
+            fieldstr += fields[6] + ' text not null, '
+            fieldstr += fields[7] + ' bigint not null'
+        else:
+            fieldstr += fields[3] + ' bigint not null'
+        if len(fields)>8:
+            fieldstr += ', ' + \
+                ' integer not null, '.join(fields[4+int(r)*4:]) + \
+                ' integer not null'
+        fieldstr += ')'
         query = 'CREATE TABLE ' + tablename + ' ' + fieldstr
         run_query(pg, query)
         return tablename
@@ -282,16 +292,19 @@ def get_query_string(ttm_y,
     ttmtblpfx = ttmtbl + '.'
     sum_fields = ''
     for field in ttm_tuple[1]:
-        sum_fields = sum_fields + 'SUM(' + ttmtblpfx + field + ' * ' + \
+        # If any TTM value is NULL we can count it as 0 as it is used
+        # as a multiplication factor anyway.
+        sum_fields = sum_fields + 'SUM((CASE WHEN ' + ttmtblpfx + field + \
+            ' IS NOT NULL THEN ' + ttmtblpfx + field + ' ELSE 0 END) * ' + \
             aggregate + ') AS ' + field + ', '
     sum_fields = sum_fields[:-2]
     query_select_base = 'SELECT ' + sum_fields
     query_regions_fields = ''
     if region:
-        query_regions_fields += ', s.kunta::int AS mun'
-        query_regions_fields += ', s.suur::int AS area'
-        query_regions_fields += ', s.tila::int AS dist'
-        query_regions_fields += ', s.kokotun::bigint AS reg_id'
+        query_regions_fields += ", LPAD(s.kunta::text, 3, '0') AS mun"
+        query_regions_fields += ", s.suur::text AS area"
+        query_regions_fields += ", LPAD(s.tila::text, 3, '0') AS dist"
+        query_regions_fields += ", LPAD(s.kokotun::text, 10, '0') AS reg_id"
     query_join_base = ' FROM ' + ttmtbl + \
         ' INNER JOIN hcr_msssuf_journeys j ON ' + ttmtbl + \
             '.id = j.id AND ' + ttmtbl + '.vuosi = j.vuosi'
@@ -345,7 +358,7 @@ def build_tables(tablename,
     tablename = check_table(pg, tablename, *fields, drop = drop, r = regions)
     for reg in reg_ids:
         for ttm in ttm_years():
-        # for ttm in [2013]: #DEBUG
+        # for ttm in [2018]: #DEBUG
             rowhead = ttm_fields_tuple(ttm)[1]
             for year in journey_data_years():
             # for year in [2012]: #DEBUG
@@ -380,7 +393,7 @@ def build_tables(tablename,
                 if(regions):
                     for i in range(4):
                         if rows:
-                            reg_fields.insert(0, int(rows.pop()[0]))
+                            reg_fields.insert(0, rows.pop()[0])
                 if rows:
                     for key, res_item in enumerate(rows):
                         row = [rowhead[key], ttm, year]
@@ -419,20 +432,15 @@ def main():
                         "are lowercase a-z, 0-9 and underscore ('_').")
     parser.add_argument('-d', '--drop', dest='drop', \
                         default=False, action='store_true', \
-                            help='Drop existing table of the same name')
+                            help='drop existing table of the same name')
     parser.add_argument('-c', '--classified', dest='ic', \
                         default=False, action='store_true', help=\
-                            'Only industry-classified journeys. ' + \
-                            "Incompatible with '-r'")
+                            'count only journeys classified by industry')
     parser.add_argument('-r', '--regions', dest='regions', \
                         default=False, action='store_true', help=\
-                            'Journey totals by subregion.\n' + \
-                            "Incompatible with '-c'")
+                            'count journey totals by subregion')
     try:
         args = parser.parse_args()
-        if args.ic and args.regions:
-            raise argparse.ArgumentTypeError(
-                "Options '-c' and '-r' are mutually incompatible.")
     except argparse.ArgumentTypeError:
         raise
     build_tables(args.tablename,
