@@ -279,9 +279,7 @@ def get_query_string(ttm_y,
         ttm_y        = Year of the Travel Time Matrix (TTM).
         msssuf_y     = Year of the journey data to be joined with the TTM.
         aggregate    = The journey data field that is to be aggregated.
-                       Note that this should be set together with the
-                       ic_data_only option; otherwise, the results
-                       won't make sense.
+                       May be 'yht' (the total) or any of the IC fields.
         ic_data_only = Whether the query criteria will be limited to only
                        cover the data that is classified by industry.
                        Default: False.
@@ -301,6 +299,10 @@ def get_query_string(ttm_y,
             ' IS NOT NULL THEN ' + ttmtblpfx + field + ' ELSE 0 END) * ' + \
             aggregate + ') AS ' + field + ', '
     sum_fields = sum_fields[:-2]
+    # Note that count is always the total row count, even if the query itself
+    # is IC only. THIS IS NOT A BUG! The output of the whole script writes a
+    # single row for all the industries, and the total count is included
+    # on that row.
     query_select_base = 'SELECT ' + sum_fields + ', SUM(yht) AS count'
     query_regions_fields = ''
     if region:
@@ -341,11 +343,9 @@ def build_tables(tablename,
        Arguments:
            tablename    = Name of the result table to be created.
            ic_data_only = Whether to count only those results that are
-                          classified by industry. Should not be used together
-                          with regions.
-           regions      = Count results by region. Should not be used
-                          together with ic_data_only.
-           drop         = If the tablename already exists, whether to drop
+                          classified by industry.
+           regions      = Count the results by region.
+           drop         = If the tablename already exists: whether to drop
                           the existing table.
     """
     
